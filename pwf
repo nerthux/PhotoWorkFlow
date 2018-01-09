@@ -1,0 +1,37 @@
+#!/bin/bash          
+PHOTOS_DIR="/home/gabriel/Pictures/DSLR"
+
+case "$1" in
+	deep-storage)
+		if [ $2 ] && [ -d "$PHOTOS_DIR/$2" ]
+		then
+			for file in $PHOTOS_DIR/$2/01_RAW/*
+			do
+				FILENAME=$(basename "$file")
+				EXTENSION="${FILENAME##*.}"
+				FILENAME="${FILENAME%.*}"
+
+				if [ "$EXTENSION" == "CR2" ]
+				then
+    					darktable-cli $PHOTOS_DIR/$2/01_RAW/$FILENAME.CR2 $PHOTOS_DIR/$2/09_Thumbnails/$FILENAME.jpg --width 300 
+				fi
+			done
+
+			sudo aws s3 sync $PHOTOS_DIR/$2/01_RAW s3://raw.gabriel.photo/$2
+			sudo aws s3 sync $PHOTOS_DIR/$2/09_Thumbnails s3://thumbs.gabriel.photo/$2
+
+		else
+			echo "Oops!.. Filmroll not found, check the filmroll name"
+			exit 128
+		fi
+		;;
+	list-filmrolls)
+		ls $PHOTOS_DIR
+		;;
+	show-storage)
+		sudo aws s3 ls raw.gabriel.photo
+		;;
+	*)
+		echo $"Usage: $0 {deep-storage|list-filmrolls|show-storage}"
+		exit 1
+esac
