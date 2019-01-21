@@ -1,27 +1,68 @@
 #!/bin/bash          
 PHOTOS_DIR="/home/gabriel/Pictures/DSLR"
 
+create_thumbnails () {
+	for file in $PHOTOS_DIR/$1/01_RAW/*
+	do
+		FILENAME=$(basename "$file")
+		EXTENSION="${FILENAME##*.}"
+		FILENAME="${FILENAME%.*}"
+
+		if [ "$EXTENSION" == "CR2" ]
+		then
+			darktable-cli $PHOTOS_DIR/$1/01_RAW/$FILENAME.CR2 $PHOTOS_DIR/$1/09_Thumbnails/$FILENAME.jpg --width 300 
+		fi
+	done
+}
+
+send_to_s3 () {
+	sudo aws s3 sync $PHOTOS_DIR/$1/01_RAW s3://raw.gabriel.photo/$1
+	sudo aws s3 sync $PHOTOS_DIR/$1/09_Thumbnails s3://thumbs.gabriel.photo/$1
+}
+
+create_negative () {
+	convert -append $PHOTOS_DIR/$1/09_Thumbnails/*.jpg $PHOTOS_DIR/$1/09_Thumbnails/Thumbnails-Negative.jpg
+}
+
+compress_filmroll () {
+	7z a -p$2 -mx=9 -mhe -t7z $PHOTOS_DIR/$1/09_Thumbnails/Thumbnails-Negative.7z $PHOTOS_DIR/$1/09_Thumbnails/Thumbnails-Negative.jpg
+	tar cf - $PHOTOS_DIR/$1/01_RAW | 7z a -si -p$2 -mx=9 -mhe -t7z $PHOTOS_DIR/$1/$1.tar.7z
+}
+
+send_to_s3_paranoic () {
+	sudo aws s3 cp $PHOTOS_DIR/$1/$1.tar.7z s3://raw.gabriel.photo/$1/$1.tar.7z
+	sudo aws s3 sync $PHOTOS_DIR/$1/09_Thumbnails/Thumbnails-Negative.7z s3://thumbs.gabriel.photo/$1/Thumbnails-Negative.7z
+}
+
+create_skel () {
+	mkdir $PHOTOS_DIR/$1/02_JPEG
+	mkdir $PHOTOS_DIR/$1/03_GIMP
+	mkdir $PHOTOS_DIR/$1/08_DONE
+	mkdir $PHOTOS_DIR/$1/05_Gallery
+	mkdir $PHOTOS_DIR/$1/09_Thumbnails
+}
+
+send_to_gallery () {
+	rsync -r $PHOTOS_DIR/$1/05_Gallery/* c4tech@gabriel.photo:/var/www/galleries.gabriel.photo/$1
+}
+
 case "$1" in
+        thumbnails)
+                if [ $2 ] && [ -d "$PHOTOS_DIR/$2" ]
+                then
+                        create_thumbnails $2
+                else
+                        echo "Oops!.. Filmroll $2 not found, check the filmroll name"
+                        exit 128
+                fi
+                ;;
 	deep-storage)
 		if [ $2 ] && [ -d "$PHOTOS_DIR/$2" ]
 		then
-			for file in $PHOTOS_DIR/$2/01_RAW/*
-			do
-				FILENAME=$(basename "$file")
-				EXTENSION="${FILENAME##*.}"
-				FILENAME="${FILENAME%.*}"
-
-				if [ "$EXTENSION" == "CR2" ]
-				then
-    					darktable-cli $PHOTOS_DIR/$2/01_RAW/$FILENAME.CR2 $PHOTOS_DIR/$2/09_Thumbnails/$FILENAME.jpg --width 300 
-				fi
-			done
-
-			sudo aws s3 sync $PHOTOS_DIR/$2/01_RAW s3://raw.gabriel.photo/$2
-			sudo aws s3 sync $PHOTOS_DIR/$2/09_Thumbnails s3://thumbs.gabriel.photo/$2
-
+			create_thumbnails $2
+			send_to_s3 $2
 		else
-			echo "Oops!.. Filmroll not found, check the filmroll name"
+			echo "Oops!.. Filmroll $2 not found, check the filmroll name"
 			exit 128
 		fi
 		;;
@@ -30,6 +71,29 @@ case "$1" in
 		;;
 	show-storage)
 		sudo aws s3 ls raw.gabriel.photo
+		;;
+	paranoic-storage)
+		if [ $2 ] && [ -d "$PHOTOS_DIR/$2" ]
+		then
+			echo "Enter a password for the encription: "
+			read -s encription_password
+			create_thumbnails $2
+			create_negative $2
+			compress_filmroll $2 $encription_password
+		else
+			echo "Oops!.. Filmroll $2 not found, check the filmroll name"
+			exit 128
+		fi
+		;;
+	send-paranoic)
+		send_to_s3_paranoic $2
+		;;
+
+	create-skel)
+		create_skel $2
+		;;
+	send-gallery)
+		send_to_gallery $2
 		;;
 	*)
 		echo $"Usage: $0 {deep-storage|list-filmrolls|show-storage}"
